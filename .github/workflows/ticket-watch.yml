@@ -1,0 +1,76 @@
+name: Ticket watch
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # every 5 min (GitHub may delay scheduled runs a bit)
+  workflow_dispatch:
+    inputs:
+      test_notify:
+        description: "Send a test email/Telegram instead of checking"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: write   # needed to disable this workflow after alerting
+
+concurrency:
+  group: ticket-watch
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      WATCH_URLS: ${{ vars.WATCH_URLS || 'https://www.scopecinemas.com/movies/avengers-doomsday' }}
+      FAIL_ALERT_AFTER: ${{ vars.FAIL_ALERT_AFTER || '12' }}
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: "587"
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      EMAIL_TO: ${{ secrets.EMAIL_TO }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      WHATSAPP_PROVIDER: ${{ vars.WHATSAPP_PROVIDER }}
+      WHATSAPP_TO: ${{ secrets.WHATSAPP_TO }}
+      CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # Each run starts fresh, so remember "already alerted" / failure counts via the cache
+      - name: Restore state
+        uses: actions/cache/restore@v4
+        with:
+          path: watch_state.json
+          key: watch-state-${{ github.run_id }}
+          restore-keys: watch-state-
+
+      - name: Send test notification
+        if: ${{ inputs.test_notify }}
+        run: python monitor.py --test-notify
+
+      - name: Check page
+        id: watch
+        if: ${{ !inputs.test_notify }}
+        run: python monitor.py --once
+
+      - name: Save state
+        if: always() && hashFiles('watch_state.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: watch_state.json
+          key: watch-state-${{ github.run_id }}
+
+      - name: Stop watching once alerted
+        if: steps.watch.outputs.all_notified == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow disable "Ticket watch" --repo "$GITHUB_REPOSITORY"
