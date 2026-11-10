@@ -64,10 +64,18 @@ def check_html(html: str) -> tuple[bool | None, str]:
     page (blocked by Cloudflare, layout changed, error page, ...).
     """
     soup = BeautifulSoup(html, "html.parser")
-    main = soup.find("main")
-    hero = main.find("header") if main else None
+    # The site streams with Next.js: the raw HTML first has a *loading* <main>
+    # (logo + progress bar), and the real page sits in a later hidden block.
+    # So look through every <main> for the one whose <header> has the title.
+    hero = None
+    for main in soup.find_all("main"):
+        header = main.find("header")
+        if header and header.find("h1"):
+            hero = header
+            break
     if hero is None:
-        return None, "hero section not found"
+        page_title = soup.title.get_text(strip=True) if soup.title else "no <title>"
+        return None, f"hero section not found (page title: {page_title!r}, {len(html)} bytes)"
 
     h1 = hero.find("h1")
     title = h1.get_text(" ", strip=True) if h1 else "Unknown movie"
@@ -284,6 +292,11 @@ def main() -> int:
         state.save()
 
         if args.once:
+            done = all(state.get(u)["notified"] for u in urls)
+            gh_out = os.getenv("GITHUB_OUTPUT")
+            if gh_out:  # lets the GitHub workflow disable itself once alerted
+                with open(gh_out, "a") as f:
+                    f.write(f"all_notified={'true' if done else 'false'}\n")
             return 0
         if not args.keep_running and all(state.get(u)["notified"] for u in urls):
             log.info("Tickets found for every URL; stopping. Use --keep-running to keep watching.")
