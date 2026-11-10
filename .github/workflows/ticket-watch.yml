@@ -3,10 +3,17 @@ name: Ticket watch
 on:
   schedule:
     - cron: "*/5 * * * *"   # every 5 min (GitHub may delay scheduled runs a bit)
+    # Status emails at 9 AM, 10 AM, 2 PM, 5 PM, 8 PM Sri Lanka time (UTC+5:30)
+    # = 03:30, 04:30, 08:30, 11:30, 14:30 UTC
+    - cron: "30 3,4,8,11,14 * * *"
   workflow_dispatch:
     inputs:
       test_notify:
         description: "Send a test email/Telegram instead of checking"
+        type: boolean
+        default: false
+      status_email:
+        description: "Check and email the current status (like the daily email)"
         type: boolean
         default: false
 
@@ -60,7 +67,14 @@ jobs:
       - name: Check page
         id: watch
         if: ${{ !inputs.test_notify }}
-        run: python monitor.py --once
+        env:
+          STATUS_RUN: ${{ github.event.schedule == '30 3,4,8,11,14 * * *' || inputs.status_email == true }}
+        run: |
+          if [ "$STATUS_RUN" = "true" ]; then
+            python monitor.py --once --status
+          else
+            python monitor.py --once
+          fi
 
       - name: Save state
         if: always() && hashFiles('watch_state.json') != ''

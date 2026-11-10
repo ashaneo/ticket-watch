@@ -233,7 +233,7 @@ class State:
 # --------------------------------------------------------------------------- #
 # Main loop
 # --------------------------------------------------------------------------- #
-def check_url(url: str, st: dict, fail_alert_after: int) -> None:
+def check_url(url: str, st: dict, fail_alert_after: int) -> tuple[bool | None, str]:
     try:
         available, title = check_html(fetch(url))
     except Exception as exc:  # noqa: BLE001
@@ -249,7 +249,7 @@ def check_url(url: str, st: dict, fail_alert_after: int) -> None:
                 "The site may be blocking the bot or the layout changed.",
             )
             st["fail_alerted"] = True
-        return
+        return available, title
 
     st["failures"], st["fail_alerted"] = 0, False
     if available:
@@ -259,6 +259,21 @@ def check_url(url: str, st: dict, fail_alert_after: int) -> None:
             st["notified"] = True
     else:
         log.info("%s -> not yet (%s)", url, title)
+    return available, title
+
+
+def send_status_email(results: list[tuple[str, bool | None, str]]) -> None:
+    """Daily 'how are things' email, sent whether tickets are out or not."""
+    icon = {True: "🎟️ TICKETS OUT", False: "⏳ Not yet", None: "⚠️ Couldn't check"}
+    lines = [f"{icon[a]} — {t}\n{u}" for u, a, t in results]
+    if any(a is True for _, a, _ in results):
+        subject = "Ticket status: 🎟️ TICKETS ARE OUT"
+    elif any(a is None for _, a, _ in results):
+        subject = "Ticket status: ⚠️ couldn't check the page"
+    else:
+        subject = "Ticket status: ⏳ not yet"
+    stamp = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
+    send_email(subject, "\n\n".join(lines) + f"\n\nChecked at {stamp}. The watcher is still running.")
 
 
 def main() -> int:
@@ -270,6 +285,7 @@ def main() -> int:
     p.add_argument("--test-notify", action="store_true", help="Send a test email + WhatsApp and exit")
     p.add_argument("--state", default=env("STATE_FILE", "watch_state.json"))
     p.add_argument("--telegram-chat-id", action="store_true", help="Print your Telegram chat id and exit")
+    p.add_argument("--status", action="store_true", help="Also email the current status, tickets or not (daily digest)")
     args = p.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -287,9 +303,13 @@ def main() -> int:
     log.info("Watching %d URL(s) every %ds: %s", len(urls), args.interval, ", ".join(urls))
 
     while True:
+        results = []
         for url in urls:
-            check_url(url, state.get(url), fail_alert_after)
+            available, title = check_url(url, state.get(url), fail_alert_after)
+            results.append((url, available, title))
         state.save()
+        if args.status:
+            send_status_email(results)
 
         if args.once:
             done = all(state.get(u)["notified"] for u in urls)
