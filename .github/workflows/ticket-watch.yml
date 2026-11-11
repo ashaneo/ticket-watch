@@ -2,10 +2,9 @@ name: Ticket watch
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # every 5 min (GitHub may delay scheduled runs a bit)
-    # Status emails at 9 AM, 10 AM, 2 PM, 5 PM, 8 PM Sri Lanka time (UTC+5:30)
-    # = 03:30, 04:30, 08:30, 11:30, 14:30 UTC
-    - cron: "30 3,4,8,11,14 * * *"
+    # Backup only. GitHub often skips scheduled runs, so the real timing comes from
+    # cron-job.org calling workflow_dispatch (every 5 min + status emails).
+    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       test_notify:
@@ -68,7 +67,7 @@ jobs:
         id: watch
         if: ${{ !inputs.test_notify }}
         env:
-          STATUS_RUN: ${{ github.event.schedule == '30 3,4,8,11,14 * * *' || inputs.status_email == true }}
+          STATUS_RUN: ${{ inputs.status_email == true || github.event.inputs.status_email == 'true' }}
         run: |
           if [ "$STATUS_RUN" = "true" ]; then
             python monitor.py --once --status
